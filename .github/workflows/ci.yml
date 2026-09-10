@@ -59,6 +59,9 @@ jobs:
             cargo clippy -p valle-ffmpeg --no-default-features --features "$feature" --all-targets --locked -- -D warnings
           done
       - run: cargo package --workspace --locked
+      - name: Exclude package staging trees from the build cache
+        if: always()
+        run: python -c "import shutil; shutil.rmtree('target/package', ignore_errors=True)"
   native:
     strategy:
       fail-fast: false

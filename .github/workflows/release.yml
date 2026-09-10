@@ -42,3 +42,6 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: python tools/publish.py --publish
+      - name: Exclude package staging trees from the build cache
+        if: always()
+        run: python -c "import shutil; shutil.rmtree('target/package', ignore_errors=True)"
