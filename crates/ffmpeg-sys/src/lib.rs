@@ -14,7 +14,12 @@
 pub mod runtime;
 
 /// Raw bindings for FFmpeg 7. Only use with a runtime of the same version.
-#[allow(clippy::doc_lazy_continuation, clippy::doc_overindented_list_items)]
+// Bindgen's Windows SDK bitfield accessors can contain identity casts.
+#[allow(
+    clippy::doc_lazy_continuation,
+    clippy::doc_overindented_list_items,
+    clippy::unnecessary_cast
+)]
 pub mod abi7 {
     include!(concat!(env!("OUT_DIR"), "/abi7/bindings.rs"));
     #[macro_use]
@@ -26,7 +31,12 @@ pub mod abi7 {
 }
 
 /// Raw bindings for FFmpeg 8. Only use with a runtime of the same version.
-#[allow(clippy::doc_lazy_continuation, clippy::doc_overindented_list_items)]
+// Bindgen's Windows SDK bitfield accessors can contain identity casts.
+#[allow(
+    clippy::doc_lazy_continuation,
+    clippy::doc_overindented_list_items,
+    clippy::unnecessary_cast
+)]
 pub mod abi8 {
     include!(concat!(env!("OUT_DIR"), "/abi8/bindings.rs"));
     #[macro_use]
@@ -38,7 +48,12 @@ pub mod abi8 {
 }
 
 /// Raw bindings for FFmpeg 9. Only use with a runtime of the same version.
-#[allow(clippy::doc_lazy_continuation, clippy::doc_overindented_list_items)]
+// Bindgen's Windows SDK bitfield accessors can contain identity casts.
+#[allow(
+    clippy::doc_lazy_continuation,
+    clippy::doc_overindented_list_items,
+    clippy::unnecessary_cast
+)]
 pub mod abi9 {
     include!(concat!(env!("OUT_DIR"), "/abi9/bindings.rs"));
     #[macro_use]
