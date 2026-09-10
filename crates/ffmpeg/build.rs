@@ -41,7 +41,8 @@ fn copy(source: &Path, destination: &Path, major: u32) {
         if path.extension().is_none_or(|e| e != "rs") {
             continue;
         }
-        let text = fs::read_to_string(&path).unwrap();
+        // Normalize checkout line endings before matching multiline crate-root declarations.
+        let text = fs::read_to_string(&path).unwrap().replace("\r\n", "\n");
         let text = versions.replace_all(&text, |c: &regex::Captures<'_>| {
             let version = (c[1].parse::<u32>().unwrap(), c[2].parse::<u32>().unwrap());
             if version <= (major, 0) {
