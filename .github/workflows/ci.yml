@@ -1,0 +1,100 @@
+name: CI
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+permissions:
+  contents: read
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2022]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Install libclang on Linux
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libclang-dev
+      - name: Install libclang on macOS
+        if: runner.os == 'macOS'
+        run: |
+          brew install llvm
+          echo "LIBCLANG_PATH=$(brew --prefix llvm)/lib" >> "$GITHUB_ENV"
+      - name: Install libclang on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install llvm -y --no-progress
+          "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $env:GITHUB_ENV
+      - name: Rust toolchain
+        run: |
+          rustup toolchain install 1.96.0 --profile minimal --component rustfmt --component clippy
+          rustup default 1.96.0
+      - run: cargo fmt --all -- --check
+      - run: cargo test --workspace --locked
+      - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - run: cargo check --workspace --no-default-features --locked
+      - name: Independent public features
+        shell: bash
+        run: |
+          for feature in codec format filter device software-scaling software-resampling; do
+            cargo clippy -p valle-ffmpeg --no-default-features --features "$feature" --all-targets --locked -- -D warnings
+          done
+      - run: cargo package --workspace --locked
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Install libclang on Linux
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libclang-dev
+      - name: Install libclang on macOS
+        if: runner.os == 'macOS'
+        run: |
+          brew install llvm
+          echo "LIBCLANG_PATH=$(brew --prefix llvm)/lib" >> "$GITHUB_ENV"
+      - name: Rust toolchain
+        run: |
+          rustup toolchain install 1.96.0 --profile minimal
+          rustup default 1.96.0
+      - name: Build pinned test runtimes sequentially
+        run: |
+          for major in 7 8 9; do
+            python3 tools/build-test-runtime.py "$major" --directory "$RUNNER_TEMP/ffmpeg-$major"
+            echo "VALLE_TEST_FFMPEG_${major}_DIR=$RUNNER_TEMP/ffmpeg-$major/runtime/lib" >> "$GITHUB_ENV"
+          done
+      - name: Exact pixel and lifetime roundtrips
+        run: cargo test -p valle-ffmpeg --locked --test runtime native_runtime_matrix -- --ignored --exact
+      - name: Inherited native unit tests
+        shell: bash
+        run: |
+          for major in 7 8 9; do
+            VALLE_FFMPEG_DIR="$RUNNER_TEMP/ffmpeg-$major/runtime/lib" cargo test -p valle-ffmpeg --locked --lib "backend::v$major::" -- --ignored --test-threads=1
+          done
+  msrv:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Minimum Rust version
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libclang-dev
+          rustup toolchain install 1.88.0 --profile minimal
+          cargo +1.88.0 check --workspace --all-features --locked

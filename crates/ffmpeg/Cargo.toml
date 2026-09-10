@@ -1,0 +1,35 @@
+[package]
+name = "valle-ffmpeg"
+description = "Rust FFmpeg API with runtime selection of FFmpeg 7, 8 and 9"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+license.workspace = true
+readme = "README.md"
+build = "build.rs"
+keywords = ["ffmpeg", "multimedia", "video", "audio"]
+categories = ["multimedia"]
+
+[features]
+default = ["codec", "format", "filter", "device", "software-scaling", "software-resampling"]
+codec = ["valle-ffmpeg-sys/avcodec"]
+format = ["codec", "valle-ffmpeg-sys/avformat"]
+filter = ["valle-ffmpeg-sys/avfilter"]
+device = ["format", "valle-ffmpeg-sys/avdevice"]
+software-scaling = ["codec", "valle-ffmpeg-sys/swscale"]
+software-resampling = ["valle-ffmpeg-sys/swresample"]
+non-exhaustive-enums = ["valle-ffmpeg-sys/non-exhaustive-enums"]
+image = ["dep:image"]
+
+[dependencies]
+valle-ffmpeg-sys.workspace = true
+libc.workspace = true
+bitflags = "2.13"
+image = { version = "0.25", optional = true }
+
+[build-dependencies]
+regex = "1"
+
+[dev-dependencies]
+tempfile = "3"

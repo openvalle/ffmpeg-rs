@@ -1,0 +1,12 @@
+# Source and license notices
+
+Derived from ffmpeg-next 9.0.0, maintained upstream at
+https://github.com/zmwangx/rust-ffmpeg. Original authors include meh. and Zhiming Wang.
+The upstream Rust code retains its WTFPL license and authorship. Valle's Rust
+additions use the same license; see LICENSE and the notices in individual files.
+
+The upstream source is pinned to this published archive:
+
+| Source | SHA-256 |
+| --- | --- |
+| https://static.crates.io/crates/ffmpeg-next/ffmpeg-next-9.0.0.crate | `6380599799e175191eb7ffe82c97f36a2a90a36cbc54c738a903e5287d7f516a` |

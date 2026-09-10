@@ -1,0 +1,14 @@
+[workspace]
+members = ["crates/ffmpeg-sys", "crates/ffmpeg"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+repository = "https://github.com/openvalle/ffmpeg-rs"
+license = "WTFPL"
+
+[workspace.dependencies]
+valle-ffmpeg-sys = { path = "crates/ffmpeg-sys", version = "0.1.0", default-features = false }
+libc = "0.2"
