@@ -3,6 +3,8 @@
 import argparse
 import hashlib
 import os
+import platform
+import sys
 from pathlib import Path
 import subprocess
 import tarfile
@@ -15,9 +17,20 @@ HASHES = {
 }
 
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument("major", type=int, choices=HASHES)
-parser.add_argument("--directory", type=Path, required=True)
+parser.add_argument("major", type=int, choices=HASHES, nargs="?")
+parser.add_argument("--directory", type=Path)
+parser.add_argument("--fingerprint", action="store_true", help="print a platform/compiler/config cache key")
 args = parser.parse_args()
+windows = sys.platform in ("win32", "msys", "cygwin")
+if args.fingerprint:
+    compiler = subprocess.check_output(["gcc" if windows else "cc", "--version"])
+    identity = f"{platform.system()} {platform.release()} {platform.machine()} {os.environ.get('ImageVersion', '')}".encode()
+    print(hashlib.sha256(Path(__file__).read_bytes() + compiler + identity).hexdigest())
+    raise SystemExit(0)
+if args.major is None or args.directory is None:
+    parser.error("major and --directory are required for a build")
+if sys.platform == "win32":
+    parser.error("build Windows DLLs using the MSYS2 python and shell (see CI)")
 root = args.directory.resolve()
 root.mkdir(parents=True, exist_ok=True)
 archive = root / f"ffmpeg-{args.major}.0.tar.xz"
@@ -34,13 +47,17 @@ if not source.exists():
                 raise SystemExit(f"unexpected archive member: {member.name}")
         tar.extractall(root)
 prefix = root / "runtime"
-subprocess.run([
+configure = [
     str(source / "configure"), f"--prefix={prefix}", "--disable-everything",
     "--disable-autodetect", "--disable-programs", "--disable-doc", "--disable-network",
     "--disable-x86asm", "--enable-shared", "--disable-static", "--enable-encoder=ffv1",
-    "--enable-decoder=ffv1", "--enable-muxer=matroska", "--enable-demuxer=matroska",
-    "--enable-protocol=file", "--enable-filter=overlay",
-], cwd=source, check=True)
+    "--enable-decoder=ffv1,pcm_s16le", "--enable-muxer=matroska,wav,image2",
+    "--enable-demuxer=matroska,wav", "--enable-protocol=file", "--enable-filter=overlay,null",
+]
+if windows:
+    configure.extend(["--target-os=mingw32", "--arch=x86_64", "--cc=gcc",
+                      "--disable-pthreads", "--enable-w32threads", "--extra-ldflags=-static-libgcc"])
+subprocess.run(configure, cwd=source, check=True)
 subprocess.run(["make", f"-j{min(os.cpu_count() or 2, 8)}"], cwd=source, check=True)
 subprocess.run(["make", "install-libs"], cwd=source, check=True)
-print(prefix / "lib")
+print(prefix / ("bin" if windows else "lib"))

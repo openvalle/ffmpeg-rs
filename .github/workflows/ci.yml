@@ -13,10 +13,14 @@ jobs:
       matrix:
         os: [ubuntu-24.04, macos-15, windows-2022]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
       - name: Install libclang on Linux
         if: runner.os == 'Linux'
         run: |
@@ -37,9 +41,16 @@ jobs:
         run: |
           rustup toolchain install 1.96.0 --profile minimal --component rustfmt --component clippy
           rustup default 1.96.0
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
+        with:
+          key: ${{ runner.os }}-${{ runner.arch }}-build-${{ hashFiles('crates/ffmpeg-sys/headers/**', 'crates/ffmpeg-sys/build/**', 'crates/ffmpeg-sys/build.rs') }}
+          cache-workspace-crates: true
+          cache-all-crates: true
+      - run: python -m unittest discover -s tools/tests -v
       - run: cargo fmt --all -- --check
       - run: cargo test --workspace --locked
       - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - run: python tools/check-required-symbols.py
       - run: cargo check --workspace --no-default-features --locked
       - name: Independent public features
         shell: bash
@@ -52,12 +63,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-15]
+        os: [ubuntu-24.04, macos-15, windows-2022]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
       - name: Install libclang on Linux
         if: runner.os == 'Linux'
         run: |
@@ -68,24 +83,57 @@ jobs:
         run: |
           brew install llvm
           echo "LIBCLANG_PATH=$(brew --prefix llvm)/lib" >> "$GITHUB_ENV"
+      - name: Install libclang on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install llvm -y --no-progress
+          "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $env:GITHUB_ENV
+      - uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2
+        if: runner.os == 'Windows'
+        with:
+          msystem: UCRT64
+          update: true
+          install: make diffutils python mingw-w64-ucrt-x86_64-gcc
       - name: Rust toolchain
         run: |
           rustup toolchain install 1.96.0 --profile minimal
           rustup default 1.96.0
-      - name: Build pinned test runtimes sequentially
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
+        with:
+          key: ${{ runner.os }}-${{ runner.arch }}-native-${{ hashFiles('crates/ffmpeg-sys/headers/**', 'crates/ffmpeg-sys/build/**', 'crates/ffmpeg-sys/build.rs') }}
+          cache-workspace-crates: true
+          cache-all-crates: true
+      - name: Runtime compiler identity on Unix
+        if: runner.os != 'Windows'
+        id: unix-compiler
+        run: echo "fingerprint=$(python tools/build-test-runtime.py --fingerprint)" >> "$GITHUB_OUTPUT"
+      - name: Runtime compiler identity on Windows
+        if: runner.os == 'Windows'
+        id: windows-compiler
+        shell: msys2 {0}
+        run: echo "fingerprint=$(python tools/build-test-runtime.py --fingerprint)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        id: runtimes
+        with:
+          path: ${{ runner.temp }}/ffmpeg-runtimes/*/runtime
+          key: ffmpeg-runtimes-${{ runner.os }}-${{ runner.arch }}-${{ steps.unix-compiler.outputs.fingerprint || steps.windows-compiler.outputs.fingerprint }}
+      - name: Build pinned test runtimes sequentially on Unix
+        if: runner.os != 'Windows' && steps.runtimes.outputs.cache-hit != 'true'
         run: |
           for major in 7 8 9; do
-            python3 tools/build-test-runtime.py "$major" --directory "$RUNNER_TEMP/ffmpeg-$major"
-            echo "VALLE_TEST_FFMPEG_${major}_DIR=$RUNNER_TEMP/ffmpeg-$major/runtime/lib" >> "$GITHUB_ENV"
+            python tools/build-test-runtime.py "$major" --directory "$RUNNER_TEMP/ffmpeg-runtimes/ffmpeg-$major"
           done
-      - name: Exact pixel and lifetime roundtrips
-        run: cargo test -p valle-ffmpeg --locked --test runtime native_runtime_matrix -- --ignored --exact
-      - name: Inherited native unit tests
+      - name: Build pinned test DLLs sequentially on Windows
+        if: runner.os == 'Windows' && steps.runtimes.outputs.cache-hit != 'true'
+        shell: msys2 {0}
+        run: |
+          for major in 7 8 9; do
+            python tools/build-test-runtime.py "$major" --directory "$(cygpath -u "$RUNNER_TEMP")/ffmpeg-runtimes/ffmpeg-$major"
+          done
+      - name: Native loading, media and upstream regressions for every ABI
         shell: bash
-        run: |
-          for major in 7 8 9; do
-            VALLE_FFMPEG_DIR="$RUNNER_TEMP/ffmpeg-$major/runtime/lib" cargo test -p valle-ffmpeg --locked --lib "backend::v$major::" -- --ignored --test-threads=1
-          done
+        run: python tools/test-native.py --root "$RUNNER_TEMP/ffmpeg-runtimes"
   msrv:
     runs-on: ubuntu-24.04
     steps:
@@ -97,4 +145,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libclang-dev
           rustup toolchain install 1.88.0 --profile minimal
-          cargo +1.88.0 check --workspace --all-features --locked
+          rustup default 1.88.0
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
+        with:
+          key: msrv
+      - run: cargo +1.88.0 check --workspace --all-features --locked

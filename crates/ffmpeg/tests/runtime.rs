@@ -62,6 +62,27 @@ fn runtime_worker() {
         .unwrap();
     let runtime = valle_ffmpeg::init().unwrap();
     assert_eq!(runtime.version.major(), expected);
+    macro_rules! check_abi {
+        ($abi:ident, $major:literal) => {
+            if expected == $major {
+                valle_ffmpeg::sys::$abi::check().unwrap();
+                assert!(valle_ffmpeg::sys::$abi::has_symbol("av_frame_alloc").unwrap());
+                assert!(!valle_ffmpeg::sys::$abi::has_symbol("valle_missing_symbol").unwrap());
+            } else {
+                assert!(
+                    valle_ffmpeg::sys::$abi::check()
+                        .err()
+                        .unwrap()
+                        .to_string()
+                        .contains("ABI mismatch")
+                );
+                assert!(valle_ffmpeg::sys::$abi::has_symbol("av_frame_alloc").is_err());
+            }
+        };
+    }
+    check_abi!(abi7, 7);
+    check_abi!(abi8, 8);
+    check_abi!(abi9, 9);
     assert!(valle_ffmpeg::set_directory(empty.path().into()).is_err());
     std::thread::scope(|scope| {
         for _ in 0..8 {

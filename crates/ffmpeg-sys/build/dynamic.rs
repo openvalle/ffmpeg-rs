@@ -16,6 +16,8 @@ pub fn generate(output: &Path, major: u32) {
     let original = fs::read_to_string(output.join("bindings.original.rs")).unwrap();
     let mut file = syn::parse_file(&original).unwrap();
     let mut fields = Vec::new();
+    let mut names = Vec::new();
+    let mut availability = Vec::new();
     let mut loads = Vec::new();
     let mut wrappers = Vec::new();
     for item in &mut file.items {
@@ -40,6 +42,8 @@ pub fn generate(output: &Path, major: u32) {
                 return false;
             }
             let id = &f.sig.ident;
+            names.push(name.clone());
+            availability.push(quote! { #name => functions.#id.is_some() });
             let args = &f.sig.inputs;
             let result = &f.sig.output;
             let values = args.iter().map(|arg| match arg {
@@ -67,10 +71,31 @@ pub fn generate(output: &Path, major: u32) {
     }
     file.items
         .retain(|item| !matches!(item, Item::ForeignMod(b) if b.items.is_empty()));
+    names.sort();
+    fs::write(output.join("symbols.txt"), names.join("\n")).unwrap();
     let variant = quote::format_ident!("V{major}");
     let generated = quote! {
         #file
         #(#wrappers)*
+        /// Check the selected runtime before using this ABI's typed wrappers or native pointers.
+        pub fn check() -> Result<&'static crate::runtime::Runtime, crate::runtime::LoadError> {
+            let runtime = crate::runtime::load()?;
+            if matches!(&runtime.functions, crate::runtime::Functions::#variant(_)) {
+                Ok(runtime)
+            } else {
+                Err(crate::runtime::LoadError(format!(
+                    "FFmpeg ABI mismatch: attempted ABI {} with loaded FFmpeg {}",
+                    #major, runtime.version.major(),
+                )))
+            }
+        }
+        /// Whether a generated function is available in this ABI and loaded library set.
+        /// Unknown names and functions excluded by Cargo features return false.
+        pub fn has_symbol(name: &str) -> Result<bool, crate::runtime::LoadError> {
+            check()?;
+            let functions = functions();
+            Ok(match name { #(#availability,)* _ => false })
+        }
         fn functions() -> &'static DynamicFunctions {
             match &crate::runtime::loaded().functions {
                 crate::runtime::Functions::#variant(functions) => functions,

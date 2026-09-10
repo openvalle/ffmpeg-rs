@@ -47,7 +47,7 @@ are not drop-in replacements for the upstream API.
 valle-ffmpeg = "0.1.0"
 ```
 
-The crates are prepared for publication; this checkout has not been published.
+Use the Git dependency below until a crates.io release is available.
 During local development use `path = "../ffmpeg-rs/crates/ffmpeg"` instead.
 
 ```rust,no_run
@@ -93,15 +93,28 @@ The root API provides `init`, `set_directory`, `set_log_level`, `codecs`,
 The video encoder accepts RGBA frames at a constant frame rate; call `finish()` to
 flush packets and write the container trailer. Codec and output pixel format are
 explicit options; missing encoders return errors. The decoder returns owned RGBA
-frames with stream timestamps, and frames remain usable after the decoder is dropped.
+frames with best-effort stream timestamps (falling back to PTS), and frames remain usable after the decoder is dropped.
 
 Integrations needing audio primitives, custom muxing, filters or GPU/native pointers
 can use the inherited typed APIs under `backend::{v7,v8,v9}`, selected with
 `init()?.version`. These are advanced APIs: objects and pointers must never cross
 ABI namespaces. Normal video use does not require caller-side version matches.
-The `sys::abi*` modules expose raw unsafe FFI. Core symbols are checked during load;
-optional platform APIs require the matching FFmpeg build and panic if called when
-absent. Variadic functions and FFmpeg globals are not exposed as dynamic wrappers.
+The `sys::abi*` modules expose raw unsafe FFI. `sys::abi7::check()` (and its 8/9
+counterparts) returns a `LoadError` if that ABI does not match the loaded runtime.
+`sys::abi7::has_symbol("av_frame_alloc")` checks both the ABI and function availability;
+unknown names and APIs excluded by Cargo features return `false`.
+
+Core symbols are checked during load. Optional platform APIs require a matching
+FFmpeg build. The generated call wrappers keep `unsafe extern "C"` signatures for
+C callback compatibility: calling the wrong ABI or an absent optional function
+**aborts the process**, because a panic cannot unwind through that boundary.
+Use the fallible checks before advanced calls; `catch_unwind` cannot recover from
+this misuse. The root APIs return load errors before making native calls.
+Variadic functions and FFmpeg globals are not exposed as dynamic wrappers.
+
+Library paths supplied through `set_directory`, `VALLE_FFMPEG_DIR` or platform search
+must be trusted. Architecture and ABI checks detect incompatible installations;
+they do not sandbox native code loaded from those paths.
 
 ## Build and validation
 
@@ -126,12 +139,34 @@ VALLE_TEST_FFMPEG_9_DIR=/path/to/ffmpeg9/lib \
 cargo test -p valle-ffmpeg --test runtime native_runtime_matrix -- --ignored --exact
 ```
 
-The native matrix requires FFV1 encoding/decoding and Matroska muxing/demuxing. It
-checks exact RGBA pixels and alpha, row padding, timestamps, key-frame flags, frame
-ownership, concurrent initialization, missing codecs and recovery after a failed load.
-Inherited native unit tests are ignored by default; run only the selected namespace,
-for example `VALLE_FFMPEG_DIR=/path/to/ffmpeg7/lib cargo test -p valle-ffmpeg --lib backend::v7:: -- --ignored`.
-The inherited filter test additionally requires the `overlay` filter.
+The native matrix checks exact RGBA pixels and alpha, row padding, best-effort PTS,
+key flags, side data and color properties, frame ownership, concurrent initialization,
+missing codecs and recovery after failed loading. It also runs the inherited unit
+tests and four integration suites restored from the pinned ffmpeg-next 9.0.0 archive:
+audio plane slices, filter frame reuse, cross-thread ownership, and custom stream I/O.
+Each ABI runs in a separate process.
+
+To build the same small native fixtures as CI and run all native tests:
+
+```bash
+for major in 7 8 9; do
+  python3 tools/build-test-runtime.py "$major" --directory "/tmp/ffmpeg-tests/ffmpeg-$major"
+done
+python3 tools/test-native.py --root /tmp/ffmpeg-tests
+```
+
+The fixtures enable FFV1 and PCM s16le decoding, FFV1 encoding, Matroska/WAV I/O,
+image2 muxing, file protocol and overlay/null filters. Windows CI builds DLLs from
+the same source hashes under MSYS2 UCRT64 and runs the Rust tests as native MSVC
+executables. CI covers Linux, macOS and Windows; test runtimes are never packaged.
+
+`python3 tools/check-required-symbols.py` compares native function references in the
+wrapper and sys helpers against the generated ABI inventories and required list.
+It includes imports and macro tokens across source cfg branches, excluding comments
+and literals. It is a conservative source check for the current target SDK, not a
+proof about arbitrary downstream code or computed symbol lookups. CI runs it on
+all three platforms. Source specialization tests exercise LF/CRLF input and reject
+unhandled upstream version cfgs.
 
 ## Upstream and maintenance
 
@@ -165,4 +200,13 @@ regression coverage. Do not add support by relaxing ABI version checks.
 The manual Release workflow defaults to a dry run. Both packages use the workspace
 version. Once reviewed, publish from the same revision, sys first and wrapper second.
 Configure the repository's `CARGO_REGISTRY_TOKEN` secret before a real publication.
-No command in local validation publishes packages or creates remote repositories.
+`python3 tools/publish.py` packages and checks the release plan without uploading;
+only `--publish` permits uploads. It requires a clean checkout. On a rerun, an
+existing version is skipped only if its registry archive checksum exactly matches
+the newly packaged bytes and it is not yanked. Conflicting package bytes stop the
+release before uploading either crate. Resume partial releases from the same
+revision and toolchain; use a new version for changed contents.
+
+Cargo already waits for index propagation. If an upload ends ambiguously, the
+script checks the index with a bounded wait and never blindly repeats the upload.
+The wrapper is published only after the expected sys package is visible.

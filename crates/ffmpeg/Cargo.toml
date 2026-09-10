@@ -32,4 +32,5 @@ image = { version = "0.25", optional = true }
 regex = "1"
 
 [dev-dependencies]
+regex = "1"
 tempfile = "3"

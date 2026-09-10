@@ -1,5 +1,7 @@
 #[path = "build/dynamic.rs"]
 mod dynamic;
+#[path = "build/specialize.rs"]
+mod specialize;
 use bindgen::callbacks::{
     EnumVariantCustomBehavior, EnumVariantValue, IntKind, MacroParsingBehavior, ParseCallbacks,
 };
@@ -282,10 +284,6 @@ fn generate(major: u32, output: &std::path::Path) {
             .header(search_include(&include_paths, "libavformat/avio.h"));
     }
 
-    if env::var("CARGO_FEATURE_AVRESAMPLE").is_ok() {
-        builder = builder.header(search_include(&include_paths, "libavresample/avresample.h"));
-    }
-
     builder = builder
         .header(search_include(&include_paths, "libavutil/adler32.h"))
         .header(search_include(&include_paths, "libavutil/aes.h"))
@@ -348,13 +346,6 @@ fn generate(major: u32, output: &std::path::Path) {
         builder = builder.header(raw_color_params_path);
     }
 
-    if env::var("CARGO_FEATURE_POSTPROC").is_ok() {
-        let postproc_path = search_include(&include_paths, "libpostproc/postprocess.h");
-        if std::path::Path::new(&postproc_path).exists() {
-            builder = builder.header(postproc_path);
-        }
-    }
-
     if env::var("CARGO_FEATURE_SWRESAMPLE").is_ok() {
         builder = builder.header(search_include(&include_paths, "libswresample/swresample.h"));
     }
@@ -392,18 +383,7 @@ fn copy_helpers(major: u32, output: &std::path::Path) {
     for entry in fs::read_dir("src/avutil").unwrap() {
         let path = entry.unwrap().path();
         if path.extension().is_some_and(|e| e == "rs") {
-            let text = fs::read_to_string(&path)
-                .unwrap()
-                .replace("crate::", &format!("crate::abi{major}::"))
-                .replace("#[macro_export]", "#[allow(unused_macros)]")
-                .replace(
-                    "feature = \"ffmpeg_8_0\"",
-                    if major >= 8 {
-                        "valle_enabled"
-                    } else {
-                        "valle_disabled"
-                    },
-                );
+            let text = specialize::helper(&fs::read_to_string(&path).unwrap(), major);
             fs::write(destination.join(path.file_name().unwrap()), text).unwrap();
         }
     }

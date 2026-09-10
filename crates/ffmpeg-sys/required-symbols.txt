@@ -226,6 +226,9 @@ swr_free
 swr_get_delay
 swr_init
 swr_input
+swresample_configuration
+swresample_license
+swresample_version
 sws_addVec
 sws_allocVec
 sws_cloneVec
@@ -250,9 +253,6 @@ sws_scaleVec
 sws_setColorspaceDetails
 sws_shiftVec
 sws_subVec
-swscale_version
 swscale_configuration
 swscale_license
-swresample_version
-swresample_configuration
-swresample_license
+swscale_version

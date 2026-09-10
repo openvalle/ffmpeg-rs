@@ -87,17 +87,7 @@ impl Decoder {
                             ff::software::scaling::Flags::BILINEAR,
                         )?);
                     }
-                    let mut output = rgba(width, height)?;
-                    self.scaler.as_mut().unwrap().run(&decoded, &mut output)?;
-                    output.set_pts(decoded.timestamp().or(decoded.pts()));
-                    // Preserve frame properties (including key-frame flags) without changing pixel storage.
-                    let result = unsafe {
-                        ff::ffi::av_frame_copy_props(output.as_mut_ptr(), decoded.as_ptr())
-                    };
-                    if result < 0 {
-                        return Err(ff::Error::from(result).into());
-                    }
-                    return Ok(Some(output));
+                    return convert_to_rgba(&decoded, self.scaler.as_mut().unwrap()).map(Some);
                 }
                 Err(ff::Error::Eof) => {
                     self.finished = true;
@@ -132,6 +122,22 @@ impl Decoder {
         }
     }
 }
+
+// Keep the timestamp decision after copy_props, which also copies the original pts.
+fn convert_to_rgba(
+    decoded: &ff::frame::Video,
+    scaler: &mut ff::software::scaling::Context,
+) -> Result<ff::frame::Video> {
+    let mut output = rgba(decoded.width(), decoded.height())?;
+    scaler.run(decoded, &mut output)?;
+    let result = unsafe { ff::ffi::av_frame_copy_props(output.as_mut_ptr(), decoded.as_ptr()) };
+    if result < 0 {
+        return Err(ff::Error::from(result).into());
+    }
+    output.set_pts(decoded.timestamp().or(decoded.pts()));
+    Ok(output)
+}
+
 
 pub struct Encoder {
     output: ff::format::context::Output,
@@ -241,5 +247,65 @@ impl Encoder {
         self.drain(true)?;
         self.output.write_trailer()?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "requires the selected FFmpeg runtime"]
+    fn converted_frames_preserve_best_effort_pts_and_properties() {
+        let mut scaler = ff::software::scaling::Context::get(
+            ff::format::Pixel::BGRA, 2, 2, ff::format::Pixel::RGBA, 2, 2,
+            ff::software::scaling::Flags::BILINEAR,
+        ).unwrap();
+        for (pts, best, expected) in [
+            (None, Some(100), Some(100)),
+            (Some(42), Some(84), Some(84)),
+            (Some(42), None, Some(42)),
+            (None, None, None),
+        ] {
+            let mut decoded = ff::frame::Video::new(ff::format::Pixel::BGRA, 2, 2);
+            decoded.set_pts(pts);
+            let stride = decoded.stride(0);
+            for y in 0..2 {
+                decoded.data_mut(0)[y * stride..y * stride + 8]
+                    .copy_from_slice(&[1, 2, 3, 255, 5, 6, 7, 255]);
+            }
+            unsafe {
+                let raw = &mut *decoded.as_mut_ptr();
+                raw.best_effort_timestamp = best.unwrap_or(ff::ffi::AV_NOPTS_VALUE);
+                raw.flags |= ff::ffi::AV_FRAME_FLAG_KEY;
+                raw.color_range = ff::ffi::AVColorRange::AVCOL_RANGE_JPEG;
+                let side = ff::ffi::av_frame_new_side_data(
+                    decoded.as_mut_ptr(), ff::ffi::AVFrameSideDataType::AV_FRAME_DATA_A53_CC, 3,
+                );
+                assert!(!side.is_null());
+                std::ptr::copy_nonoverlapping([9, 8, 7].as_ptr(), (*side).data, 3);
+            }
+            let output = convert_to_rgba(&decoded, &mut scaler).unwrap();
+            assert_eq!(output.pts(), expected, "source pts={pts:?}, best={best:?}");
+            assert_eq!(output.timestamp(), best);
+            // FFmpeg 7 also has the legacy key_frame field; preserve both representations.
+            assert_eq!(output.is_key(), decoded.is_key());
+            assert_eq!(unsafe { (*output.as_ptr()).flags & ff::ffi::AV_FRAME_FLAG_KEY },
+                ff::ffi::AV_FRAME_FLAG_KEY);
+            assert_eq!(output.format(), ff::format::Pixel::RGBA);
+            for y in 0..2 {
+                assert_eq!(&output.data(0)[y * output.stride(0)..y * output.stride(0) + 8],
+                    &[3, 2, 1, 255, 7, 6, 5, 255]);
+            }
+            unsafe {
+                assert_ne!((*output.as_ptr()).data[0], (*decoded.as_ptr()).data[0]);
+                assert_eq!((*output.as_ptr()).color_range, ff::ffi::AVColorRange::AVCOL_RANGE_JPEG);
+                let side = ff::ffi::av_frame_get_side_data(
+                    output.as_ptr(), ff::ffi::AVFrameSideDataType::AV_FRAME_DATA_A53_CC,
+                );
+                assert!(!side.is_null());
+                assert_eq!(std::slice::from_raw_parts((*side).data, (*side).size), &[9, 8, 7]);
+            }
+        }
     }
 }

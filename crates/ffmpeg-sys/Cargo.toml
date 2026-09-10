@@ -35,3 +35,14 @@ syn = { version = "2", features = ["full"] }
 quote = "1"
 prettyplease = "0.2"
 regex = "1"
+
+[dev-dependencies]
+regex = "1"
+syn = { version = "2", features = ["full"] }
+quote = "1"
+prettyplease = "0.2"
+tempfile = "3"
+
+[[test]]
+name = "specialization"
+path = "build/specialize.rs"
