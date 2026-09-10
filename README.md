@@ -157,8 +157,8 @@ python3 tools/test-native.py --root /tmp/ffmpeg-tests
 
 The fixtures enable FFV1 and PCM s16le decoding, FFV1 encoding, Matroska/WAV I/O,
 image2 muxing, file protocol and overlay/null filters. Windows CI builds DLLs from
-the same source hashes under MSYS2 UCRT64 and runs the Rust tests as native MSVC
-executables. CI covers Linux, macOS and Windows; test runtimes are never packaged.
+the same source hashes under MSYS2 UCRT64, includes their transitive MinGW support
+DLLs in the test fixture, and runs the Rust tests as native MSVC executables. CI covers Linux, macOS and Windows; test runtimes are never packaged.
 
 `python3 tools/check-required-symbols.py` compares native function references in the
 wrapper and sys helpers against the generated ABI inventories and required list.

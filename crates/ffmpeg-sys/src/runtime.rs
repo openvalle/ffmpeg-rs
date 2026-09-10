@@ -385,9 +385,10 @@ fn load_directory(directory: Option<&Path>, version: Version) -> Result<Runtime,
         };
         let library = unsafe { open_library(path.as_os_str()) }.map_err(|e| {
             LoadError(format!(
-                "cannot load {} for {}: {e}",
+                "cannot load {} for {}: {}",
                 path.display(),
-                std::env::consts::ARCH
+                std::env::consts::ARCH,
+                describe_error(&e)
             ))
         })?;
         let symbol = format!("{name}_version\0");
@@ -559,6 +560,17 @@ fn pe_imports(bytes: &[u8]) -> Result<Vec<String>, LoadError> {
     Err(invalid())
 }
 
+fn describe_error(error: &(dyn std::error::Error + 'static)) -> String {
+    let mut message = error.to_string();
+    let mut cause = error.source();
+    while let Some(error) = cause {
+        message.push_str(": ");
+        message.push_str(&error.to_string());
+        cause = error.source();
+    }
+    message
+}
+
 unsafe fn open_library(path: &OsStr) -> Result<Library, libloading::Error> {
     #[cfg(target_os = "windows")]
     {
@@ -657,6 +669,21 @@ fn check_architecture(path: &Path) -> Result<(), LoadError> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn library_error_preserves_the_os_cause() {
+        let directory = tempfile::tempdir().unwrap();
+        let error = unsafe {
+            super::open_library(directory.path().join("missing-library.dll").as_os_str())
+        }
+        .err()
+        .unwrap();
+        let cause = std::error::Error::source(&error).expect("OS loader failure has a cause");
+        let message = super::describe_error(&error);
+        assert!(message.starts_with(&error.to_string()));
+        assert!(message.contains(&cause.to_string()));
+        assert_ne!(message, error.to_string());
+    }
+
     use super::*;
     #[test]
     fn reads_versioned_pe_dependencies_and_rejects_truncated_tables() {
